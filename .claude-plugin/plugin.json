@@ -1,0 +1,6 @@
+{
+  "name": "code-mon",
+  "version": "0.1.0",
+  "description": "A tiny pixel pet in a side pane that reacts to what Claude does in every open tab.",
+  "license": "MIT"
+}
