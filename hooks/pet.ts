@@ -1,16 +1,6 @@
-import type { Animal, Mood } from './pet-types'
+import type { Animal, Mood, Pet } from '../types'
 
-export type Pet = {
-  animal: Animal
-  name: string
-  adoptedAt: number
-  lastTickAt: number
-  lastActiveAt: number
-  hungerElapsedMs: number
-  tempMood?: Mood
-  tempMoodUntil?: number
-  isNapping: boolean
-}
+export type { Pet }
 
 export type PetEvent = {
   kind:

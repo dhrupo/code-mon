@@ -1,5 +1,7 @@
-export const ANIMALS = ['cat', 'dog', 'hare', 'fox', 'penguin', 'hamster', 'chick', 'frog', 'panda'] as const
-export type Animal = (typeof ANIMALS)[number]
+import type { Animal, Mood } from '../types'
 
-export const MOODS = ['playful', 'happy', 'hungry', 'dizzy', 'sick', 'alert', 'proud', 'sleepy', 'missed-you'] as const
-export type Mood = (typeof MOODS)[number]
+export type { Animal, Mood }
+
+export const ANIMALS = ['cat', 'dog', 'hare', 'fox', 'penguin', 'hamster', 'chick', 'frog', 'panda'] as const satisfies readonly Animal[]
+
+export const MOODS = ['playful', 'happy', 'hungry', 'dizzy', 'sick', 'alert', 'proud', 'sleepy', 'missed-you'] as const satisfies readonly Mood[]
