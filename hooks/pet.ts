@@ -24,6 +24,7 @@ export type PetEvent = {
     | 'play'
     | 'nap'
     | 'wake'
+    | 'pane-opened'
     | 'tick'
 }
 
@@ -55,14 +56,11 @@ export function adoptPet(animal: Animal, name: string, now: number): Pet {
 }
 
 export function applyPetEvent(pet: Pet, event: PetEvent, now: number): Pet {
-  const wasAwayLong = now - pet.lastActiveAt >= MISSED_YOU_AFTER_MS
   if (event.kind === 'tick') {
     const hungerElapsedMs = pet.hungerElapsedMs + countOpenTabTime(pet.lastTickAt, now)
-    const ticked = { ...pet, lastTickAt: Math.max(pet.lastTickAt, now), hungerElapsedMs }
-    if (!wasAwayLong) return ticked
-    // Greeting counts as activity, so the next tick does not dance again.
-    return { ...ticked, lastActiveAt: now, tempMood: 'missed-you', tempMoodUntil: now + MISSED_YOU_MS }
+    return { ...pet, lastTickAt: Math.max(pet.lastTickAt, now), hungerElapsedMs }
   }
+  const wasAwayLong = now - pet.lastActiveAt >= MISSED_YOU_AFTER_MS
   const hungerElapsedMs = event.kind === 'feed' ? 0 : pet.hungerElapsedMs
   const isNapping = event.kind === 'nap'
   const eventMood = SHORT_MOOD_BY_EVENT[event.kind]

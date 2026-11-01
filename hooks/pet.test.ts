@@ -139,12 +139,24 @@ test('feeding 1 h 59 min after the last activity is a plain happy, no dance', ()
   expect(currentMood(pet, ADOPTED_AT + 7_140_000)).toBe('happy')
 })
 
-test('a tick 2 h after the last activity starts the missed-you dance once, not on every tick', () => {
-  const back = applyPetEvent(adoptPet('chick', 'Sunny', ADOPTED_AT), { kind: 'tick' }, ADOPTED_AT + 7_200_000)
-  const nextTick = applyPetEvent(back, { kind: 'tick' }, ADOPTED_AT + 7_260_000)
+test('a tick 2 h after the last activity does not dance, because nobody may be watching', () => {
+  const pet = applyPetEvent(adoptPet('chick', 'Sunny', ADOPTED_AT), { kind: 'tick' }, ADOPTED_AT + 7_200_000)
+
+  expect(currentMood(pet, ADOPTED_AT + 7_200_000)).toBe('playful')
+})
+
+test('opening the pane 2 h after the last activity dances once, not on the next open', () => {
+  const back = applyPetEvent(adoptPet('chick', 'Sunny', ADOPTED_AT), { kind: 'pane-opened' }, ADOPTED_AT + 7_200_000)
+  const reopened = applyPetEvent(back, { kind: 'pane-opened' }, ADOPTED_AT + 7_260_000)
 
   expect(currentMood(back, ADOPTED_AT + 7_200_000)).toBe('missed-you')
-  expect(currentMood(nextTick, ADOPTED_AT + 7_260_000)).toBe('playful')
+  expect(currentMood(reopened, ADOPTED_AT + 7_260_000)).toBe('playful')
+})
+
+test('opening the pane 1 h 59 min after the last activity does not dance', () => {
+  const pet = applyPetEvent(adoptPet('chick', 'Sunny', ADOPTED_AT), { kind: 'pane-opened' }, ADOPTED_AT + 7_140_000)
+
+  expect(currentMood(pet, ADOPTED_AT + 7_140_000)).toBe('playful')
 })
 
 test('a tick 1 h 59 min after the last activity does not dance', () => {
