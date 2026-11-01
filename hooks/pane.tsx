@@ -7,12 +7,18 @@ import type { WalkPosition } from './pane-scene'
 import { HUNGRY_AFTER_MS, adoptPet, applyPetEvent, currentMood } from './pet'
 import type { PetEvent } from './pet'
 import { ANIMALS } from './pet-types'
+import { soundForMood, playPetSound } from './sound'
 import { SPRITE_COLUMNS, spriteFrames } from './sprites'
+import { BUBBLE_PHRASE, readTabNewsSince } from './tab-events'
 
 export const PANE_ID = 'code-mon'
 const PET_STORE_KEY = 'pet'
 const FRAME_MS = 120
-const TICK_EVERY_FRAMES = 500
+const POLL_EVERY_FRAMES = 8
+const TICK_MS = 60_000
+const BUBBLE_MS = 6_000
+const LEADER_KEY = 'pane-leader'
+const LEADER_STALE_MS = 5_000
 const DAY_MS = 86_400_000
 const MAX_NAME_LENGTH = 16
 const HOP_LIFTS = [0, 1, 2, 2, 1, 0]
@@ -31,7 +37,15 @@ const petAtom = atom({ plugin: 'code-mon', key: 'pet' } as const, null, { shape:
 const pickedAnimalAtom = atom({ plugin: 'code-mon', key: 'pickedAnimal' } as const, null)
 const bubbleAtom = atom({ plugin: 'code-mon', key: 'bubble' } as const, null)
 
-const animation: { walk: WalkPosition; step: number; timer?: Timer } = { walk: { x: 0, isFacingLeft: false }, step: 0 }
+const animation: {
+  walk: WalkPosition
+  step: number
+  timer?: Timer
+  lastNewsAt?: number
+  lastTickAt?: number
+  lastSoundAt?: number
+  bubbleUntil?: number
+} = { walk: { x: 0, isFacingLeft: false }, step: 0 }
 
 export function registerPetPane(on: On): void {
   on('session.start', async ($, e, next) => {
@@ -51,7 +65,9 @@ export function registerPetPane(on: On): void {
     on('command.run', { command: kind }, async $ => {
       const pet = await applyEventToPet($, { kind })
       if (!pet) return { text: NO_PET_TEXT }
-      return { text: describePet(pet, await $.clock.now()) }
+      const now = await $.clock.now()
+      await playMoodSound($, pet, now, true)
+      return { text: describePet(pet, now) }
     })
   }
 
@@ -122,6 +138,7 @@ export function registerPetPane(on: On): void {
 
     const columns = Math.max(SPRITE_COLUMNS, Math.min(60, e.props.bodyColumns))
     const bubble = await read($, bubbleAtom)
+    animation.lastNewsAt ??= now
     animation.timer ??= startAnimation($, columns)
 
     return (
@@ -141,9 +158,8 @@ function startAnimation($: EngineInterface, columns: number): Timer {
     animation.step += 1
     let pet = await read($, petAtom)
     if (!pet) return
+    if (animation.step % POLL_EVERY_FRAMES === 0) pet = (await pollOtherTabs($)) ?? pet
     const now = await $.clock.now()
-    if (animation.step % TICK_EVERY_FRAMES === 0) pet = await applyEventToPet($, { kind: 'tick' })
-    if (!pet) return
     const shown = await $.ui.blit({ requestId: PANE_ID, key: 'pet', cells: drawPetFrame(pet, now, columns) })
     if ('deny' in shown) {
       timer.cancel()
@@ -159,6 +175,63 @@ function drawPetFrame(pet: Pet, now: number, columns: number): string {
   const frames = spriteFrames(pet.animal, mood)
   const frame = frames[Math.floor(animation.step / 4) % frames.length]!
   return drawPetScene({ frame, x: animation.walk.x, lift: liftForMood(mood, animation.step), isFacingLeft: animation.walk.isFacingLeft, columns })
+}
+
+async function pollOtherTabs($: EngineInterface): Promise<Pet | null> {
+  const now = await $.clock.now()
+  const isLeader = await claimPaneLeader($, now)
+  const news = await readTabNewsSince($, animation.lastNewsAt ?? now)
+  const latest = news[news.length - 1]
+  if (latest) {
+    animation.lastNewsAt = latest.at
+    animation.bubbleUntil = now + BUBBLE_MS
+    await update($, bubbleAtom, () => `${latest.tab}: ${BUBBLE_PHRASE[latest.kind]}`)
+  } else if (animation.bubbleUntil !== undefined && now >= animation.bubbleUntil) {
+    animation.bubbleUntil = undefined
+    await update($, bubbleAtom, () => null)
+  }
+
+  const stored = await $.store.get(PET_STORE_KEY)
+  let pet = isSavedPet(stored) ? stored : await read($, petAtom)
+  if (!pet) return null
+  if (!isLeader) {
+    if (JSON.stringify(pet) !== JSON.stringify(await read($, petAtom))) await update($, petAtom, () => pet)
+    return pet
+  }
+  for (const event of news) pet = applyPetEvent(pet, { kind: event.kind }, now)
+  const isTickDue = now - (animation.lastTickAt ?? 0) >= TICK_MS
+  if (isTickDue) {
+    pet = applyPetEvent(pet, { kind: 'tick' }, now)
+    animation.lastTickAt = now
+  }
+  if (news.length > 0 || isTickDue) await savePet($, pet)
+  if (news.length > 0) await playMoodSound($, pet, now, false)
+  return pet
+}
+
+// One pane leads: only it applies tab news, ticks hunger and plays sounds, so two open panes never double them.
+async function claimPaneLeader($: EngineInterface, now: number): Promise<boolean> {
+  const me = await $.session.id()
+  const leader = await $.store.get(LEADER_KEY)
+  const isOtherLeaderAlive = isPaneLeader(leader) && leader.sessionId !== me && now - leader.beatAt <= LEADER_STALE_MS
+  if (isOtherLeaderAlive) return false
+  await $.store.set(LEADER_KEY, { sessionId: me, beatAt: now })
+  return true
+}
+
+async function playMoodSound($: EngineInterface, pet: Pet, now: number, isUserAction: boolean): Promise<void> {
+  const name = soundForMood(currentMood(pet, now))
+  if (!name) return
+  const isPlayed = await playPetSound($, {
+    animal: pet.animal,
+    name,
+    isPaneOpen: animation.timer !== undefined,
+    isNapping: pet.isNapping,
+    lastPlayedAt: animation.lastSoundAt,
+    now,
+    isUserAction,
+  })
+  if (isPlayed) animation.lastSoundAt = now
 }
 
 async function applyEventToPet($: EngineInterface, event: PetEvent): Promise<Pet | null> {
@@ -198,6 +271,10 @@ function isSavedPet(value: unknown): value is Pet {
   if (typeof value !== 'object' || value === null) return false
   const pet = value as Partial<Pet>
   return typeof pet.name === 'string' && typeof pet.hungerElapsedMs === 'number' && ANIMALS.includes(pet.animal as Animal)
+}
+
+function isPaneLeader(value: unknown): value is { sessionId: string; beatAt: number } {
+  return typeof value === 'object' && value !== null && typeof (value as { beatAt?: unknown }).beatAt === 'number'
 }
 
 function toAnimal(value: string): Animal | null {
