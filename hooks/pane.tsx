@@ -16,6 +16,16 @@ const TICK_EVERY_FRAMES = 500
 const DAY_MS = 86_400_000
 const MAX_NAME_LENGTH = 16
 const HOP_LIFTS = [0, 1, 2, 2, 1, 0]
+const NO_PET_TEXT = 'No pet yet. Open /codemon to pick one.'
+const PET_COMMANDS = [
+  { name: 'codemon', description: 'Open the Code-mon pet pane' },
+  { name: 'feed', description: 'Feed your Code-mon pet' },
+  { name: 'pet', description: 'Pet your Code-mon pet' },
+  { name: 'play', description: 'Play with your Code-mon pet' },
+  { name: 'nap', description: 'Put your Code-mon pet to sleep and mute it' },
+  { name: 'stats', description: "Show your Code-mon pet's name, mood and hunger" },
+  { name: 'adopt', description: 'Adopt another animal, e.g. /adopt fox' },
+] as const
 
 const petAtom = atom({ plugin: 'code-mon', key: 'pet' } as const, null, { shape: 'pet-1' })
 const pickedAnimalAtom = atom({ plugin: 'code-mon', key: 'pickedAnimal' } as const, null)
@@ -25,7 +35,7 @@ const animation: { walk: WalkPosition; step: number; timer?: Timer } = { walk: {
 
 export function registerPetPane(on: On): void {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'codemon', description: 'Open the Code-mon pet pane' })
+    for (const command of PET_COMMANDS) await $.command.register(command)
     const saved = await $.store.get(PET_STORE_KEY)
     if (isSavedPet(saved)) await update($, petAtom, () => saved)
     return next(e)
@@ -37,6 +47,28 @@ export function registerPetPane(on: On): void {
     return { text: 'Code-mon pane opened.' }
   })
 
+  for (const kind of ['feed', 'pet', 'play', 'nap'] as const) {
+    on('command.run', { command: kind }, async $ => {
+      const pet = await applyEventToPet($, { kind })
+      if (!pet) return { text: NO_PET_TEXT }
+      return { text: describePet(pet, await $.clock.now()) }
+    })
+  }
+
+  on('command.run', { command: 'stats' }, async $ => {
+    const pet = await read($, petAtom)
+    if (!pet) return { text: NO_PET_TEXT }
+    return { text: describePet(pet, await $.clock.now()) }
+  })
+
+  on('command.run', { command: 'adopt' }, async ($, e) => {
+    const animal = toAnimal(e.args.trim().toLowerCase())
+    if (!animal) return { text: `Pick one of: ${ANIMALS.join(', ')}. Example: /adopt fox` }
+    await update($, pickedAnimalAtom, () => animal)
+    await $.ui.open({ id: PANE_ID, title: 'Code-mon', closeOnEscape: true })
+    return { text: `Name your ${animal} in the Code-mon pane.` }
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e) => {
     if (e.surface !== 'terminal') {
       const { Text } = $.ui.resolve(e)
@@ -46,8 +78,8 @@ export function registerPetPane(on: On): void {
     const pet = await read($, petAtom)
     const now = await $.clock.now()
 
-    if (!pet) {
-      const picked = await read($, pickedAnimalAtom)
+    const picked = await read($, pickedAnimalAtom)
+    if (picked || !pet) {
       if (!picked) {
         return (
           <Box flexDirection="column">
