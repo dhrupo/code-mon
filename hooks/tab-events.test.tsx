@@ -205,3 +205,22 @@ test('no pane open means no sound, even for events from other tabs', async ($, o
   expect(tabRecord('s-2')?.events).toHaveLength(1)
   expect(sounds).toEqual([])
 })
+
+test('the leader pane deletes the keys of tabs that went quiet, and keeps active ones', async ($, on) => {
+  const { clock, saved } = await startTab($, on, {
+    sessionId: 's-1',
+    cwd: '/work/api',
+    store: {
+      pet: playfulPanda(),
+      'tab:old': { tab: 'old', events: [{ id: 'old:1', kind: 'crash', at: NOW - 11 * 60_000 }] },
+      'tab:recent': { tab: 'recent', events: [{ id: 'recent:1', kind: 'crash', at: NOW - 60_000 }] },
+    },
+  })
+  const ui = await $.ui.mount(PANE)
+
+  await clock.advance(1_500)
+
+  expect(saved.has('tab:old')).toBe(false)
+  expect(saved.has('tab:recent')).toBe(true)
+  await ui.unmount()
+})

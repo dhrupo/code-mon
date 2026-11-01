@@ -74,6 +74,16 @@ export async function readTabNewsSince($: EngineInterface, sinceAt: number): Pro
   return news.sort((a, b) => a.at - b.at)
 }
 
+// Without this, every past session would leave a key behind and fill the store's 4 MiB over time.
+export async function deleteQuietTabRecords($: EngineInterface, now: number): Promise<void> {
+  const keys = (await $.store.keys()).filter(key => key.startsWith(TAB_KEY_PREFIX))
+  for (const key of keys) {
+    const saved = await $.store.get(key)
+    const newestAt = isTabRecord(saved) ? Math.max(0, ...saved.events.map(event => event.at)) : 0
+    if (now - newestAt >= KEEP_EVENT_MS) await $.store.delete(key)
+  }
+}
+
 function countStackLines(text: string): number {
   return text.split('\n').filter(line => STACK_LINE.test(line)).length
 }

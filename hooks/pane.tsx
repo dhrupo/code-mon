@@ -9,7 +9,7 @@ import type { PetEvent } from './pet'
 import { ANIMALS } from './pet-types'
 import { soundForMood, playPetSound } from './sound'
 import { SPRITE_COLUMNS, spriteFrames } from './sprites'
-import { BUBBLE_PHRASE, readTabNewsSince } from './tab-events'
+import { BUBBLE_PHRASE, deleteQuietTabRecords, readTabNewsSince } from './tab-events'
 
 export const PANE_ID = 'code-mon'
 const PET_STORE_KEY = 'pet'
@@ -203,6 +203,7 @@ async function pollOtherTabs($: EngineInterface): Promise<Pet | null> {
   if (isTickDue) {
     pet = applyPetEvent(pet, { kind: 'tick' }, now)
     animation.lastTickAt = now
+    await deleteQuietTabRecords($, now)
   }
   if (news.length > 0 || isTickDue) await savePet($, pet)
   if (news.length > 0) await playMoodSound($, pet, now, false)
