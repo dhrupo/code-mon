@@ -8,6 +8,7 @@ import { HUNGRY_AFTER_MS, adoptPet, applyPetEvent, currentMood } from './pet'
 import type { PetEvent } from './pet'
 import { ANIMALS } from './pet-types'
 import { soundForMood, playPetSound } from './sound'
+import type { SoundName } from './sound'
 import { SPRITE_COLUMNS, spriteFrames } from './sprites'
 import { BUBBLE_PHRASE, deleteQuietTabRecords, readTabNewsSince } from './tab-events'
 
@@ -22,6 +23,7 @@ const LEADER_STALE_MS = 5_000
 const DAY_MS = 86_400_000
 const MAX_NAME_LENGTH = 16
 const HOP_LIFTS = [0, 1, 2, 2, 1, 0]
+const COMMAND_SOUND: Record<'feed' | 'pet' | 'play' | 'nap', SoundName | undefined> = { feed: 'munch', pet: 'purr', play: 'cheer', nap: undefined }
 const NO_PET_TEXT = 'No pet yet. Open /codemon to pick one.'
 const PET_COMMANDS = [
   { name: 'codemon', description: 'Open the Code-mon pet pane' },
@@ -67,7 +69,7 @@ export function registerPetPane(on: On): void {
       const pet = await applyEventToPet($, { kind })
       if (!pet) return { text: NO_PET_TEXT }
       const now = await $.clock.now()
-      await playMoodSound($, pet, now, true)
+      await playMoodSound($, pet, now, true, COMMAND_SOUND[kind])
       return { text: describePet(pet, now) }
     })
   }
@@ -221,8 +223,8 @@ async function claimPaneLeader($: EngineInterface, now: number): Promise<boolean
   return true
 }
 
-async function playMoodSound($: EngineInterface, pet: Pet, now: number, isUserAction: boolean): Promise<void> {
-  const name = soundForMood(currentMood(pet, now))
+async function playMoodSound($: EngineInterface, pet: Pet, now: number, isUserAction: boolean, chosenSound?: SoundName): Promise<void> {
+  const name = chosenSound ?? soundForMood(currentMood(pet, now))
   if (!name) return
   const isPlayed = await playPetSound($, {
     animal: pet.animal,

@@ -41,6 +41,9 @@ const SHORT_MOOD_BY_EVENT: Partial<Record<PetEvent['kind'], { mood: Mood; lastsM
   'turn-finished': { mood: 'proud', lastsMs: PROUD_MS },
 }
 
+// Claude news from any tab must not wake the pet: /nap is the user's mute until they run a command.
+const CLAUDE_EVENT_KINDS: ReadonlySet<PetEvent['kind']> = new Set(['command-failed', 'crash', 'command-passed', 'permission-asked', 'turn-finished'])
+
 export function adoptPet(animal: Animal, name: string, now: number): Pet {
   return { animal, name, adoptedAt: now, lastTickAt: now, lastActiveAt: now, hungerElapsedMs: 0, isNapping: false }
 }
@@ -52,7 +55,7 @@ export function applyPetEvent(pet: Pet, event: PetEvent, now: number): Pet {
   }
   const wasAwayLong = now - pet.lastActiveAt >= MISSED_YOU_AFTER_MS
   const hungerElapsedMs = event.kind === 'feed' ? 0 : pet.hungerElapsedMs
-  const isNapping = event.kind === 'nap'
+  const isNapping = event.kind === 'nap' || (pet.isNapping && CLAUDE_EVENT_KINDS.has(event.kind))
   const eventMood = SHORT_MOOD_BY_EVENT[event.kind]
   // Claude-signal moods (dizzy, sick, alert, proud) carry news, so the dance only replaces happy or no mood.
   const shortMood = wasAwayLong && (!eventMood || eventMood.mood === 'happy') ? MISSED_YOU_MOOD : eventMood

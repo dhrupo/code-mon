@@ -34,8 +34,20 @@ function hungryPanda(): Pet {
   }
 }
 
+const sounds: string[] = []
+
 async function startWithPet($: Engine, on: On, pet: Pet | undefined, refusedName?: string): Promise<string[]> {
   const registered: string[] = []
+  sounds.length = 0
+  on('ui.blit', () => ({ value: {} }))
+  on('env.get', () => ({ value: undefined }))
+  on('process.run', (_: unknown, e: { argv: readonly string[] }) => ({
+    value: { exitCode: 0, stdout: e.argv[0] === 'uname' ? 'Darwin\n' : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+  }))
+  on('audio.play', (_: unknown, e: { clip: { asset?: string } }) => {
+    sounds.push(e.clip.asset ?? '?')
+    return { value: undefined }
+  })
   on('command.register', (_: unknown, e: { name: string }) => {
     if (e.name === refusedName) throw new Error(`"/${e.name}" refused: it is a built-in`)
     registered.push(e.name)
@@ -147,4 +159,16 @@ test('a command name the engine refuses does not stop the other commands or the 
   expect(registered).toEqual(expect.arrayContaining(['codemon', 'pet', 'play', 'nap', 'mood', 'adopt']))
   expect(registered).not.toContain('feed')
   expect(await readStatsLine($)).toContain('Bao the panda')
+})
+
+test('with the pane open, /feed munches, /pet purrs and /play cheers', async ($, on) => {
+  await startWithPet($, on, hungryPanda())
+  const ui = await $.ui.mount(PANE)
+
+  await runCommand($, 'feed', '')
+  await runCommand($, 'pet', '')
+  await runCommand($, 'play', '')
+
+  expect(sounds).toEqual(['sounds/panda-munch.wav', 'sounds/panda-purr.wav', 'sounds/panda-cheer.wav'])
+  await ui.unmount()
 })

@@ -116,13 +116,23 @@ test('wake ends the nap', () => {
   expect(currentMood(awake, EVENT_AT + 60_000)).toBe('hungry')
 })
 
-test('any other event, such as a failed command, also ends the nap', () => {
+test('a user command such as feed also ends the nap', () => {
   const napping = applyPetEvent(hungryPetActiveAnHourAgo(), { kind: 'nap' }, EVENT_AT)
 
-  const woken = applyPetEvent(napping, { kind: 'command-failed' }, EVENT_AT + 60_000)
+  const woken = applyPetEvent(napping, { kind: 'feed' }, EVENT_AT + 60_000)
 
   expect(woken.isNapping).toBe(false)
-  expect(currentMood(woken, EVENT_AT + 60_000)).toBe('dizzy')
+  expect(currentMood(woken, EVENT_AT + 60_000)).toBe('happy')
+})
+
+test('Claude events from any tab do not wake a napping pet, so nap stays a mute', () => {
+  const napping = applyPetEvent(hungryPetActiveAnHourAgo(), { kind: 'nap' }, EVENT_AT)
+
+  for (const kind of ['command-failed', 'crash', 'command-passed', 'permission-asked', 'turn-finished'] as const) {
+    const stillNapping = applyPetEvent(napping, { kind }, EVENT_AT + 60_000)
+    expect(stillNapping.isNapping).toBe(true)
+    expect(currentMood(stillNapping, EVENT_AT + 60_000)).toBe('sleepy')
+  }
 })
 
 test('feeding 2 h after the last activity starts the missed-you dance for 8 s', () => {
