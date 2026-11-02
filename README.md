@@ -21,7 +21,7 @@ a time.
 |---|---|---|
 | playful | nothing special | roams and hops now and then |
 | happy | you fed, petted or played with it; a test or build passed | hops, hearts |
-| hungry | 2 hours after its last meal (only counted while Claude is open) | sits still, sad eyes |
+| hungry | 2 hours after its last meal (only counted while a Code-mon pane is open) | sits still, sad eyes |
 | dizzy | a command failed in any tab | swirly eyes, wobbles (a few seconds) |
 | sick | a crash with a long stack trace in any tab | green, droopy, sneezes (a few seconds) |
 | alert | Claude shows a permission dialog in any tab | jumps and chirps |

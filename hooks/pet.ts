@@ -64,7 +64,7 @@ export function applyPetEvent(pet: Pet, event: PetEvent, now: number): Pet {
   return { ...active, tempMood: shortMood.mood, tempMoodUntil: now + shortMood.lastsMs }
 }
 
-// A longer gap means no Claude tab was open to tick, and hunger only counts while one is.
+// A longer gap means no pane was open to tick, and hunger only counts while one is.
 function countOpenTabTime(lastTickAt: number, now: number): number {
   const gap = now - lastTickAt
   return gap < 0 || gap > MAX_TICK_GAP_MS ? 0 : gap
