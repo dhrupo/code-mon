@@ -127,3 +127,30 @@ test('the pet animates while the pane shows, and stops once the pane is gone', a
   expect(attemptsWhileGone).toBe(1)
   await ui.unmount()
 })
+
+test('after the pane is redrawn at a new width, the pet keeps animating at that width', async ($, on) => {
+  const now = 50 * HOUR
+  let mountedColumns = 40
+  let blitsAtNewWidth = 0
+  answerEngine(on)
+  on('ui.blit', (_, e) => {
+    if (!('cells' in e)) return { value: { deny: 'not a raster' } }
+    const columns = Uint8Array.fromBase64(e.cells).length / 12 / 6
+    if (columns !== mountedColumns) return { value: { deny: 'another size' } }
+    if (columns === 30) blitsAtNewWidth += 1
+    return { value: {} }
+  })
+  mock.store(on, { pet: hungryPanda(now) })
+  const clock = mock.clock(on, { now })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const wide = await $.ui.mount(PANE)
+  await clock.advance(500)
+  await wide.unmount()
+
+  mountedColumns = 30
+  const narrow = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 30 } })
+  await clock.advance(1_200)
+
+  expect(blitsAtNewWidth).toBeGreaterThanOrEqual(5)
+  await narrow.unmount()
+})

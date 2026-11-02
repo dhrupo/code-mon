@@ -7,7 +7,7 @@ import type { WalkPosition } from './pane-scene'
 import { HUNGRY_AFTER_MS, adoptPet, applyPetEvent, currentMood } from './pet'
 import type { PetEvent } from './pet'
 import { ANIMALS } from './pet-types'
-import { soundForMood, playPetSound } from './sound'
+import { playPetSound, shouldPlaySound, soundForMood } from './sound'
 import type { SoundName } from './sound'
 import { SPRITE_COLUMNS, spriteFrames } from './sprites'
 import { BUBBLE_PHRASE, deleteQuietTabRecords, readTabNewsSince } from './tab-events'
@@ -23,7 +23,7 @@ const LEADER_STALE_MS = 5_000
 const DAY_MS = 86_400_000
 const MAX_NAME_LENGTH = 16
 const HOP_LIFTS = [0, 1, 2, 2, 1, 0]
-const COMMAND_SOUND: Record<'feed' | 'pet' | 'play' | 'nap', SoundName | undefined> = { feed: 'munch', pet: 'purr', play: 'cheer', nap: undefined }
+const COMMAND_SOUND: Record<'feed' | 'pet' | 'play' | 'nap', SoundName> = { feed: 'munch', pet: 'purr', play: 'cheer', nap: 'yawn' }
 const NO_PET_TEXT = 'No pet yet. Open /codemon to pick one.'
 const PET_COMMANDS = [
   { name: 'codemon', description: 'Open the Code-mon pet pane' },
@@ -43,11 +43,12 @@ const animation: {
   walk: WalkPosition
   step: number
   timer?: Timer
+  columns: number
   lastNewsAt?: number
   lastTickAt?: number
   lastSoundAt?: number
   bubbleUntil?: number
-} = { walk: { x: 0, isFacingLeft: false }, step: 0 }
+} = { walk: { x: 0, isFacingLeft: false }, step: 0, columns: SPRITE_COLUMNS }
 
 export function registerPetPane(on: On): void {
   on('session.start', async ($, e, next) => {
@@ -75,7 +76,7 @@ export function registerPetPane(on: On): void {
   }
 
   on('command.run', { command: 'mood' }, async $ => {
-    const pet = await read($, petAtom)
+    const pet = await readSharedPet($)
     if (!pet) return { text: NO_PET_TEXT }
     return { text: describePet(pet, await $.clock.now()) }
   })
@@ -142,7 +143,8 @@ export function registerPetPane(on: On): void {
     const columns = Math.max(SPRITE_COLUMNS, Math.min(60, e.props.bodyColumns))
     const bubble = await read($, bubbleAtom)
     animation.lastNewsAt ??= now
-    animation.timer ??= startAnimation($, columns)
+    animation.columns = columns
+    animation.timer ??= startAnimation($)
 
     return (
       <Box flexDirection="column">
@@ -156,14 +158,14 @@ export function registerPetPane(on: On): void {
 
 }
 
-function startAnimation($: EngineInterface, columns: number): Timer {
+function startAnimation($: EngineInterface): Timer {
   const timer = $.clock.every(FRAME_MS, async () => {
     animation.step += 1
     let pet = await read($, petAtom)
     if (!pet) return
     if (animation.step % POLL_EVERY_FRAMES === 0) pet = (await pollOtherTabs($)) ?? pet
     const now = await $.clock.now()
-    const shown = await $.ui.blit({ requestId: PANE_ID, key: 'pet', cells: drawPetFrame(pet, now, columns) })
+    const shown = await $.ui.blit({ requestId: PANE_ID, key: 'pet', cells: drawPetFrame(pet, now, animation.columns) })
     if ('deny' in shown) {
       timer.cancel()
       animation.timer = undefined
@@ -206,9 +208,9 @@ async function pollOtherTabs($: EngineInterface): Promise<Pet | null> {
   if (isTickDue) {
     pet = applyPetEvent(pet, { kind: 'tick' }, now)
     animation.lastTickAt = now
-    await deleteQuietTabRecords($, now)
   }
   if (news.length > 0 || isTickDue) await savePet($, pet)
+  if (isTickDue) await deleteQuietTabRecords($, now)
   if (news.length > 0) await playMoodSound($, pet, now, false)
   return pet
 }
@@ -226,24 +228,31 @@ async function claimPaneLeader($: EngineInterface, now: number): Promise<boolean
 async function playMoodSound($: EngineInterface, pet: Pet, now: number, isUserAction: boolean, chosenSound?: SoundName): Promise<void> {
   const name = chosenSound ?? soundForMood(currentMood(pet, now))
   if (!name) return
-  const isPlayed = await playPetSound($, {
-    animal: pet.animal,
-    name,
+  const moment = {
     isPaneOpen: animation.timer !== undefined,
-    isNapping: pet.isNapping,
+    isNapping: chosenSound ? false : pet.isNapping,
     lastPlayedAt: animation.lastSoundAt,
     now,
     isUserAction,
-  })
-  if (isPlayed) animation.lastSoundAt = now
+  }
+  if (!shouldPlaySound(moment)) return
+  animation.lastSoundAt = now
+  // Not awaited: a player runs as long as its clip, and the pane must keep animating meanwhile.
+  void playPetSound($, { ...moment, animal: pet.animal, name })
 }
 
 async function applyEventToPet($: EngineInterface, event: PetEvent): Promise<Pet | null> {
-  const pet = await read($, petAtom)
+  const pet = await readSharedPet($)
   if (!pet) return null
   const changed = applyPetEvent(pet, event, await $.clock.now())
   await savePet($, changed)
   return changed
+}
+
+// Another tab may have adopted, fed or napped the pet since this tab last looked.
+async function readSharedPet($: EngineInterface): Promise<Pet | null> {
+  const stored = await $.store.get(PET_STORE_KEY)
+  return isSavedPet(stored) ? stored : await read($, petAtom)
 }
 
 async function savePet($: EngineInterface, pet: Pet): Promise<void> {

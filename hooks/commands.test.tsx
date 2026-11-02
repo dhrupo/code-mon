@@ -35,6 +35,7 @@ function hungryPanda(): Pet {
 }
 
 const sounds: string[] = []
+let clock: ReturnType<typeof mock.clock>
 
 async function startWithPet($: Engine, on: On, pet: Pet | undefined, refusedName?: string): Promise<string[]> {
   const registered: string[] = []
@@ -56,7 +57,7 @@ async function startWithPet($: Engine, on: On, pet: Pet | undefined, refusedName
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   mock.store(on, pet ? { pet } : {})
-  mock.clock(on, { now: NOW })
+  clock = mock.clock(on, { now: NOW })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   return registered
 }
@@ -168,7 +169,19 @@ test('with the pane open, /feed munches, /pet purrs and /play cheers', async ($,
   await runCommand($, 'feed', '')
   await runCommand($, 'pet', '')
   await runCommand($, 'play', '')
+  await clock.advance(50)
 
   expect(sounds).toEqual(['sounds/panda-munch.wav', 'sounds/panda-purr.wav', 'sounds/panda-cheer.wav'])
+  await ui.unmount()
+})
+
+test('with the pane open, /nap yawns once as the pet falls asleep', async ($, on) => {
+  await startWithPet($, on, hungryPanda())
+  const ui = await $.ui.mount(PANE)
+
+  await runCommand($, 'nap', '')
+  await clock.advance(50)
+
+  expect(sounds).toEqual(['sounds/panda-yawn.wav'])
   await ui.unmount()
 })

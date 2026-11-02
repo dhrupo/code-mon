@@ -224,3 +224,26 @@ test('the leader pane deletes the keys of tabs that went quiet, and keeps active
   expect(saved.has('tab:recent')).toBe(true)
   await ui.unmount()
 })
+
+test('a plain command that exits non-zero, like grep with no match, does not upset the pet', async ($, on) => {
+  const { tabRecord } = await startTab($, on, { sessionId: 's-1', cwd: '/work/api', toolAnswer: { result: {}, isError: true as const, text: 'Exit code 1' } })
+
+  await $.tool.call({ tool: 'Bash', command: 'grep -n needle file.txt' })
+  await $.tool.call({ tool: 'Bash', command: 'test -f missing.txt' })
+  expect(tabRecord('s-1')).toBeUndefined()
+
+  await $.tool.call({ tool: 'Bash', command: 'npm test' })
+  expect(tabRecord('s-1')?.events.map(event => event.kind)).toEqual(['command-failed'])
+})
+
+test('test and build commands count after cd, env vars or timeout', async ($, on) => {
+  const { tabRecord } = await startTab($, on, { sessionId: 's-1', cwd: '/work/api' })
+
+  await $.tool.call({ tool: 'Bash', command: 'cd web && npm test' })
+  await $.tool.call({ tool: 'Bash', command: 'CI=1 npx vitest run' })
+  await $.tool.call({ tool: 'Bash', command: 'timeout 60 cargo test' })
+  await $.tool.call({ tool: 'Bash', command: 'echo npm test' })
+
+  expect(tabRecord('s-1')?.events.map(event => event.kind)).toEqual(['command-passed', 'command-passed', 'command-passed'])
+})
+

@@ -10,8 +10,11 @@ const KEEP_EVENT_COUNT = 20
 const KEEP_EVENT_MS = 10 * 60_000
 const LONG_TURN_MS = 60_000
 const CRASH_STACK_LINES = 8
-const TEST_OR_BUILD_COMMAND =
-  /^(npm|pnpm|yarn|bun)( run)? (test|build)\b|^(npx |bunx )?(vitest|jest|pytest|phpunit|mocha|tsc|playwright test)\b|^(cargo|go) (test|build)\b|^(make|gradle|mvn)\b/
+const COMMAND_START = String.raw`(?:^|&&|\|\||;)\s*(?:\w+=\S*\s+)*(?:timeout\s+\d+\s+)?`
+const TEST_OR_BUILD_COMMAND = new RegExp(
+  COMMAND_START +
+    String.raw`(?:(?:npm|pnpm|yarn|bun)(?: run)? (?:test|build)\b|(?:npx |bunx )?(?:vitest|jest|pytest|phpunit|mocha|tsc|playwright test)\b|(?:cargo|go) (?:test|build)\b|(?:make|gradle|mvn)\b)`,
+)
 const STACK_LINE = /^\s+(at |File "|#\d+ )|^Traceback|^panic:|Fatal error|^Exception in thread/
 
 export const BUBBLE_PHRASE: Record<TabEventKind, string> = {
@@ -44,11 +47,13 @@ export function registerTabEvents(on: On): void {
 
 export function classifyToolResult(tool: string, command: string | undefined, ran: ToolCallResult): TabEventKind | undefined {
   if (tool !== 'Bash' || ran.deny !== undefined) return undefined
-  if (ran.isError) return countStackLines(ran.text ?? '') >= CRASH_STACK_LINES ? 'crash' : 'command-failed'
-  return command && TEST_OR_BUILD_COMMAND.test(command) ? 'command-passed' : undefined
+  if (ran.isError && countStackLines(ran.text ?? '') >= CRASH_STACK_LINES) return 'crash'
+  // grep with no match or test -f exit non-zero all day; only a test or build run failing is news.
+  if (!command || !TEST_OR_BUILD_COMMAND.test(command)) return undefined
+  return ran.isError ? 'command-failed' : 'command-passed'
 }
 
-// Each tab writes only its own key: overlapping tabs then never overwrite each other (see evidence/store-probe.md).
+// Each tab writes only its own key, so overlapping tabs never overwrite each other's events.
 async function recordTabEvent($: EngineInterface, kind: TabEventKind): Promise<void> {
   try {
     const sessionId = await $.session.id()
