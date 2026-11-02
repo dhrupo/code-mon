@@ -41,7 +41,7 @@ you never have to read it from the picture alone.
 | `/pet` | Pet it |
 | `/play` | Play with it |
 | `/nap` | Put it to sleep. This also mutes it; any other command wakes it |
-| `/stats` | Name, mood, next meal and how many days you've been together |
+| `/mood` | Name, mood, next meal and how many days you've been together |
 | `/adopt <animal>` | Swap to another animal, e.g. `/adopt fox`. Your current pet stays until you name the new one |
 
 ## Sound

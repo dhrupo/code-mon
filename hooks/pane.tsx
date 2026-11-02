@@ -29,7 +29,7 @@ const PET_COMMANDS = [
   { name: 'pet', description: 'Pet your Code-mon pet' },
   { name: 'play', description: 'Play with your Code-mon pet' },
   { name: 'nap', description: 'Put your Code-mon pet to sleep and mute it' },
-  { name: 'stats', description: "Show your Code-mon pet's name, mood and hunger" },
+  { name: 'mood', description: "Show your Code-mon pet's name, mood and hunger" },
   { name: 'adopt', description: 'Adopt another animal, e.g. /adopt fox' },
 ] as const
 
@@ -49,7 +49,8 @@ const animation: {
 
 export function registerPetPane(on: On): void {
   on('session.start', async ($, e, next) => {
-    for (const command of PET_COMMANDS) await $.command.register(command)
+    // One refused name (a built-in, another plugin's) must not cost the other commands or the saved pet.
+    await Promise.allSettled(PET_COMMANDS.map(command => $.command.register(command)))
     const saved = await $.store.get(PET_STORE_KEY)
     if (isSavedPet(saved)) await update($, petAtom, () => saved)
     return next(e)
@@ -71,7 +72,7 @@ export function registerPetPane(on: On): void {
     })
   }
 
-  on('command.run', { command: 'stats' }, async $ => {
+  on('command.run', { command: 'mood' }, async $ => {
     const pet = await read($, petAtom)
     if (!pet) return { text: NO_PET_TEXT }
     return { text: describePet(pet, await $.clock.now()) }

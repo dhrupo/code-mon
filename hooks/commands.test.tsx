@@ -34,9 +34,10 @@ function hungryPanda(): Pet {
   }
 }
 
-async function startWithPet($: Engine, on: On, pet: Pet | undefined): Promise<string[]> {
+async function startWithPet($: Engine, on: On, pet: Pet | undefined, refusedName?: string): Promise<string[]> {
   const registered: string[] = []
   on('command.register', (_: unknown, e: { name: string }) => {
+    if (e.name === refusedName) throw new Error(`"/${e.name}" refused: it is a built-in`)
     registered.push(e.name)
     return { value: { command: e.name } }
   })
@@ -67,7 +68,7 @@ async function readStatsLine($: Engine): Promise<string | undefined> {
 test('every pet command is registered', async ($, on) => {
   const registered = await startWithPet($, on, undefined)
 
-  expect(registered).toEqual(expect.arrayContaining(['codemon', 'feed', 'pet', 'play', 'nap', 'stats', 'adopt']))
+  expect(registered).toEqual(expect.arrayContaining(['codemon', 'feed', 'pet', 'play', 'nap', 'mood', 'adopt']))
 })
 
 test('/feed fills a hungry pet and makes it happy', async ($, on) => {
@@ -101,10 +102,10 @@ test('/nap puts the pet to sleep until another command wakes it', async ($, on) 
   expect(await readStatsLine($)).toContain('happy')
 })
 
-test('/stats answers with name, animal, mood, hunger and days together', async ($, on) => {
+test('/mood answers with name, animal, mood, hunger and days together', async ($, on) => {
   await startWithPet($, on, hungryPanda())
 
-  const result = await runCommand($, 'stats', '')
+  const result = await runCommand($, 'mood', '')
 
   expect(result.text).toBe('Bao the panda · hungry · feed me! · day 4')
 })
@@ -138,4 +139,12 @@ test('pet commands before any pet is adopted point to /codemon', async ($, on) =
   const result = await runCommand($, 'feed', '')
 
   expect(result.text).toBe('No pet yet. Open /codemon to pick one.')
+})
+
+test('a command name the engine refuses does not stop the other commands or the saved pet', async ($, on) => {
+  const registered = await startWithPet($, on, hungryPanda(), 'feed')
+
+  expect(registered).toEqual(expect.arrayContaining(['codemon', 'pet', 'play', 'nap', 'mood', 'adopt']))
+  expect(registered).not.toContain('feed')
+  expect(await readStatsLine($)).toContain('Bao the panda')
 })
