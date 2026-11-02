@@ -89,9 +89,10 @@ function fakeHost(setup: FakeHostSetup) {
     process: {
       run: async argv => {
         runs.push([...argv])
-        const found = argv[0] === 'which' ? argv.slice(1).filter(name => setup.installed.includes(name)) : []
+        const asked = argv[0] === 'sh' && argv[2]?.startsWith('command -v ') ? argv[2].slice('command -v '.length).split(' ') : []
+        const found = asked.filter(name => setup.installed.includes(name))
         const stdout = argv[0] === 'uname' ? `${setup.os}\n` : found.map(name => `/usr/bin/${name}\n`).join('')
-        const exitCode = argv[0] === 'which' && found.length < argv.length - 1 ? 1 : 0
+        const exitCode = asked.length > 0 && found.length < asked.length ? 1 : 0
         return { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
       },
     },
@@ -143,7 +144,7 @@ test('on Linux with no player installed the pet looks for one, then stays silent
 
   expect(host.runs).toEqual([
     ['uname', '-s'],
-    ['which', 'pw-play', 'paplay', 'aplay'],
+    ['sh', '-c', 'command -v pw-play paplay aplay'],
   ])
   expect(host.clips).toEqual([])
 })

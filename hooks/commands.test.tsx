@@ -41,6 +41,7 @@ async function startWithPet($: Engine, on: On, pet: Pet | undefined, refusedName
   const registered: string[] = []
   sounds.length = 0
   on('ui.blit', () => ({ value: {} }))
+  on('command.run', (_: unknown, e: { command: string }) => ({ text: `other plugin's /${e.command}` }))
   on('env.get', () => ({ value: undefined }))
   on('process.run', (_: unknown, e: { argv: readonly string[] }) => ({
     value: { exitCode: 0, stdout: e.argv[0] === 'uname' ? 'Darwin\n' : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
@@ -184,4 +185,12 @@ test('with the pane open, /nap yawns once as the pet falls asleep', async ($, on
 
   expect(sounds).toEqual(['sounds/panda-yawn.wav'])
   await ui.unmount()
+})
+
+test('a command name the engine refused is passed on to whoever owns it', async ($, on) => {
+  await startWithPet($, on, hungryPanda(), 'play')
+
+  const result = await runCommand($, 'play', '')
+
+  expect(result.text).toBe("other plugin's /play")
 })

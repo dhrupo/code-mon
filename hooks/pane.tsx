@@ -35,6 +35,9 @@ const PET_COMMANDS = [
   { name: 'adopt', description: 'Adopt another animal, e.g. /adopt fox' },
 ] as const
 
+// Engine-refused names (a built-in, a project command, another plugin) stay with their owner.
+const registeredCommands = new Set<string>()
+
 const petAtom = atom({ plugin: 'code-mon', key: 'pet' } as const, null, { shape: 'pet-1' })
 const pickedAnimalAtom = atom({ plugin: 'code-mon', key: 'pickedAnimal' } as const, null)
 const bubbleAtom = atom({ plugin: 'code-mon', key: 'bubble' } as const, null)
@@ -53,20 +56,24 @@ const animation: {
 export function registerPetPane(on: On): void {
   on('session.start', async ($, e, next) => {
     // One refused name (a built-in, another plugin's) must not cost the other commands or the saved pet.
-    await Promise.allSettled(PET_COMMANDS.map(command => $.command.register(command)))
+    const results = await Promise.allSettled(PET_COMMANDS.map(command => $.command.register(command)))
+    results.forEach((result, i) => result.status === 'fulfilled' && registeredCommands.add(PET_COMMANDS[i]!.name))
     const saved = await $.store.get(PET_STORE_KEY)
     if (isSavedPet(saved)) await update($, petAtom, () => saved)
+    await deleteQuietTabRecords($, await $.clock.now())
     return next(e)
   })
 
-  on('command.run', { command: 'codemon' }, async $ => {
+  on('command.run', { command: 'codemon' }, async ($, e, next) => {
+    if (!registeredCommands.has(e.command)) return next(e)
     await $.ui.open({ id: PANE_ID, title: 'Code-mon', closeOnEscape: true })
     await applyEventToPet($, { kind: 'pane-opened' })
     return { text: 'Code-mon pane opened.' }
   })
 
   for (const kind of ['feed', 'pet', 'play', 'nap'] as const) {
-    on('command.run', { command: kind }, async $ => {
+    on('command.run', { command: kind }, async ($, e, next) => {
+      if (!registeredCommands.has(e.command)) return next(e)
       const pet = await applyEventToPet($, { kind })
       if (!pet) return { text: NO_PET_TEXT }
       const now = await $.clock.now()
@@ -75,13 +82,15 @@ export function registerPetPane(on: On): void {
     })
   }
 
-  on('command.run', { command: 'mood' }, async $ => {
+  on('command.run', { command: 'mood' }, async ($, e, next) => {
+    if (!registeredCommands.has(e.command)) return next(e)
     const pet = await readSharedPet($)
     if (!pet) return { text: NO_PET_TEXT }
     return { text: describePet(pet, await $.clock.now()) }
   })
 
-  on('command.run', { command: 'adopt' }, async ($, e) => {
+  on('command.run', { command: 'adopt' }, async ($, e, next) => {
+    if (!registeredCommands.has(e.command)) return next(e)
     const animal = toAnimal(e.args.trim().toLowerCase())
     if (!animal) return { text: `Pick one of: ${ANIMALS.join(', ')}. Example: /adopt fox` }
     await update($, pickedAnimalAtom, () => animal)
@@ -172,6 +181,8 @@ function startAnimation($: EngineInterface): Timer {
       timer.cancel()
       animation.timer = undefined
       await releasePaneLeader($)
+      // A resize refuses the old size once; redrawing restarts the timer at the new size.
+      if (/size/i.test(shown.deny ?? '')) $.ui.invalidate('ui.render')
     }
   })
   return timer
@@ -207,13 +218,16 @@ async function pollOtherTabs($: EngineInterface): Promise<Pet | null> {
   }
   for (const event of news) pet = applyPetEvent(pet, { kind: event.kind }, now)
   const isTickDue = now - (animation.lastTickAt ?? 0) >= TICK_MS
+  const wasHungry = pet.hungerElapsedMs >= HUNGRY_AFTER_MS
   if (isTickDue) {
     pet = applyPetEvent(pet, { kind: 'tick' }, now)
     animation.lastTickAt = now
   }
+  const hasTurnedHungry = !wasHungry && pet.hungerElapsedMs >= HUNGRY_AFTER_MS
   if (news.length > 0 || isTickDue) await savePet($, pet)
   if (isTickDue) await deleteQuietTabRecords($, now)
   if (news.length > 0) await playMoodSound($, pet, now, false)
+  else if (hasTurnedHungry) await playMoodSound($, pet, now, false, 'call')
   return pet
 }
 
@@ -261,7 +275,9 @@ async function applyEventToPet($: EngineInterface, event: PetEvent): Promise<Pet
 // Another tab may have adopted, fed or napped the pet since this tab last looked.
 async function readSharedPet($: EngineInterface): Promise<Pet | null> {
   const stored = await $.store.get(PET_STORE_KEY)
-  return isSavedPet(stored) ? stored : await read($, petAtom)
+  if (stored === undefined) return await read($, petAtom)
+  // A pet this version cannot read (from a newer version) must never be overwritten by this tab's copy.
+  return isSavedPet(stored) ? stored : null
 }
 
 async function savePet($: EngineInterface, pet: Pet): Promise<void> {

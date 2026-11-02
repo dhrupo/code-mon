@@ -43,11 +43,12 @@ type Setup = {
   toolAnswer?: ToolCallResult
   beforeStoreSet?: (key: string, saved: Map<string, unknown>) => void
   pane?: { isMounted: boolean }
+  permissionAnswer?: Record<string, unknown>
 }
 
 async function startTab($: Engine, on: On, setup: Setup) {
   const sounds: string[] = []
-  const world: { sessionId: string; cwd: string; toolAnswer?: ToolCallResult } = { ...setup }
+  const world: { sessionId: string; cwd: string; root?: string; toolAnswer?: ToolCallResult } = { ...setup }
   const saved = new Map<string, unknown>(Object.entries(setup.store ?? {}))
   on('store.get', (_: unknown, e: { key: string }) => ({ value: structuredClone(saved.get(e.key)) }))
   on('store.keys', () => ({ value: [...saved.keys()] }))
@@ -66,6 +67,7 @@ async function startTab($: Engine, on: On, setup: Setup) {
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: world.sessionId }))
   on('session.cwd', () => ({ value: world.cwd }))
+  on('session.root', () => ({ value: world.root ?? world.cwd }))
   on('env.get', () => ({ value: undefined }))
   on('process.run', (_: unknown, e: { argv: readonly string[] }) => ({
     value: { exitCode: 0, stdout: e.argv[0] === 'uname' ? 'Darwin\n' : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
@@ -75,7 +77,7 @@ async function startTab($: Engine, on: On, setup: Setup) {
     return { value: undefined }
   })
   on('tool.call', () => world.toolAnswer ?? { result: {}, text: 'ok' })
-  on('classic.PermissionRequest', () => ({}))
+  on('classic.PermissionRequest', () => setup.permissionAnswer ?? {})
   on('turn.complete', (_: unknown, e: { answer: string }) => ({ text: e.answer }))
   const clock = mock.clock(on, { now: NOW })
   await $.session.start({ cwd: setup.cwd, surface: 'terminal', isInteractive: true })
@@ -293,4 +295,100 @@ test('a leader pane that closes hands over at once', async ($, on) => {
   await clock.advance(500)
 
   expect((saved.get('pane-leader') as { beatAt: number }).beatAt).toBe(0)
+})
+
+test('an interrupted or backgrounded test run is not news', async ($, on) => {
+  const { tabRecord, world } = await startTab($, on, { sessionId: 's-1', cwd: '/work/api' })
+
+  world.toolAnswer = { result: { stdout: '', stderr: '', interrupted: true }, isError: true as const, text: 'Interrupted' }
+  await $.tool.call({ tool: 'Bash', command: 'make test' })
+  // The shape Claude Code 2.1.316 really returns when the user presses Esc mid-run.
+  const escResult = 'Error: Exit code 137\n[Request interrupted by user for tool use]\nsleep 20 && false'
+  world.toolAnswer = { result: escResult, isError: true as const, text: escResult.replace('Error: ', '') }
+  await $.tool.call({ tool: 'Bash', command: 'make test' })
+  world.toolAnswer = { result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b1' }, text: 'started' }
+  await $.tool.call({ tool: 'Bash', command: 'npm test' })
+  world.toolAnswer = { result: { stdout: '', stderr: '', interrupted: false }, text: 'started' }
+  await $.tool.call({ tool: 'Bash', command: 'npm test', run_in_background: true })
+
+  expect(tabRecord('s-1')).toBeUndefined()
+})
+
+test('a test run followed by ; or || is not judged by the last exit code', async ($, on) => {
+  const { tabRecord } = await startTab($, on, { sessionId: 's-1', cwd: '/work/api' })
+
+  await $.tool.call({ tool: 'Bash', command: 'npm test; echo done' })
+  await $.tool.call({ tool: 'Bash', command: 'npm test || true' })
+
+  expect(tabRecord('s-1')).toBeUndefined()
+})
+
+test('a failing jest run with many stack frames is a failed test, not a crash', async ($, on) => {
+  const jestOutput = ['FAIL src/a.test.ts', ...Array.from({ length: 10 }, (_, i) => `    at Object.<anonymous> (src/a.test.ts:${i}:1)`)].join('\n')
+  const { tabRecord } = await startTab($, on, { sessionId: 's-1', cwd: '/work/api', toolAnswer: { result: {}, isError: true as const, text: jestOutput } })
+
+  await $.tool.call({ tool: 'Bash', command: 'npx jest' })
+
+  expect(tabRecord('s-1')?.events.map(event => event.kind)).toEqual(['command-failed'])
+})
+
+test('a permission request another hook already answered is not news', async ($, on) => {
+  const { tabRecord } = await startTab($, on, { sessionId: 's-1', cwd: '/work/api', permissionAnswer: { decision: { behavior: 'allow' } } })
+
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: {} } as never)
+
+  expect(tabRecord('s-1')).toBeUndefined()
+})
+
+test('more test runners count: phpunit, composer, python -m pytest, pnpm vitest, gradlew', async ($, on) => {
+  const { tabRecord } = await startTab($, on, { sessionId: 's-1', cwd: '/work/api' })
+
+  for (const command of ['./vendor/bin/phpunit', 'composer test', 'python -m pytest -q', 'pnpm vitest run', './gradlew test', 'make clean']) {
+    await $.tool.call({ tool: 'Bash', command })
+  }
+
+  expect(tabRecord('s-1')?.events).toHaveLength(5)
+})
+
+test('a tab is named by its project root, not a folder Claude cd-ed into', async ($, on) => {
+  const { tabRecord, world } = await startTab($, on, { sessionId: 's-1', cwd: '/work/api/src/deep', toolAnswer: { result: {}, isError: true as const, text: 'boom' } })
+  world.root = '/work/api'
+
+  await $.tool.call({ tool: 'Bash', command: 'npm test' })
+
+  expect(tabRecord('s-1')?.tab).toBe('api')
+})
+
+test('a session start prunes quiet tab keys even when no pane ever opens', async ($, on) => {
+  const { saved } = await startTab($, on, {
+    sessionId: 's-1',
+    cwd: '/work/api',
+    store: { 'tab:old': { tab: 'old', events: [{ kind: 'crash', at: NOW - 11 * 60_000 }] } },
+  })
+
+  expect(saved.has('tab:old')).toBe(false)
+})
+
+test('a pet saved by a newer version is never overwritten by this older one', async ($, on) => {
+  const { clock, saved } = await startTab($, on, { sessionId: 's-1', cwd: '/work/api', store: { pet: playfulPanda() } })
+  const fromNewerVersion = { ...playfulPanda(), animal: 'owl', name: 'Hoot' }
+  saved.set('pet', fromNewerVersion)
+  const ui = await $.ui.mount(PANE)
+
+  await clock.advance(61_500)
+
+  expect(saved.get('pet')).toEqual(fromNewerVersion)
+  await ui.unmount()
+})
+
+test('the leader calls once when the pet turns hungry', async ($, on) => {
+  const almostHungry = { ...playfulPanda(), hungerElapsedMs: 2 * HOUR - 30_000 }
+  const { clock, sounds } = await startTab($, on, { sessionId: 's-1', cwd: '/work/api', store: { pet: almostHungry } })
+  const ui = await $.ui.mount(PANE)
+
+  await clock.advance(62_000)
+  await clock.advance(62_000)
+
+  expect(sounds).toEqual(['sounds/panda-call.wav'])
+  await ui.unmount()
 })

@@ -74,7 +74,7 @@ async function detectHostOs($: SoundEngine): Promise<HostOs> {
 }
 
 async function findInstalledLinuxPlayers($: SoundEngine): Promise<string[]> {
-  const { stdout } = await $.process.run(['which', ...LINUX_PLAYERS])
+  const { stdout } = await $.process.run(['sh', '-c', `command -v ${LINUX_PLAYERS.join(' ')}`])
   return stdout
     .split('\n')
     .map(path => path.trim().split('/').at(-1) ?? '')

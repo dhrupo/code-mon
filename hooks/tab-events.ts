@@ -13,10 +13,11 @@ const CRASH_STACK_LINES = 8
 const COMMAND_START = String.raw`(?:^|&&|\|\||;)\s*(?:\w+=\S*\s+)*(?:timeout\s+\d+\s+)?`
 const TEST_OR_BUILD_COMMAND = new RegExp(
   COMMAND_START +
-    String.raw`(?:(?:npm|pnpm|yarn|bun)(?: run)? (?:test|build)\b|(?:npx |bunx )?(?:vitest|jest|pytest|phpunit|mocha|tsc|playwright test)\b|(?:cargo|go) (?:test|build)\b|(?:make|gradle|mvn)\b)`,
+    String.raw`(?:(?:npm|pnpm|yarn|bun)(?: run)? (?:test|build)\b|(?:npx |bunx |pnpm |yarn )?(?:vitest|jest|pytest|phpunit|pest|mocha|tsc|playwright test)\b|(?:\./)?vendor/bin/(?:phpunit|pest)\b|composer (?:run )?test\b|python3? -m pytest\b|(?:cargo|go|dotnet) (?:test|build)\b|(?:\./gradlew|gradle|mvn)\b|make(?= *$| +(?:test|check|build|all)\b))`,
 )
-// After a pipe the exit code is the last command's (tail, grep), not the test run's.
-const PIPE = /[^|]\|[^|]/
+// After |, || or ; the exit code belongs to a later command (tail, true, echo), not the test run.
+const EXIT_CODE_HIDDEN = /\||;/
+const USER_INTERRUPT = /\[Request interrupted by user/
 const STACK_LINE = /^\s+(at |File "|#\d+ )|^Traceback|^panic:|Fatal error|^Exception in thread/
 
 export const BUBBLE_PHRASE: Record<TabEventKind, string> = {
@@ -28,17 +29,17 @@ export const BUBBLE_PHRASE: Record<TabEventKind, string> = {
 }
 
 export function registerTabEvents(on: On): void {
-  on('tool.call', async ($, e, next) => {
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
-    const command = e.tool === 'Bash' && typeof e.command === 'string' ? e.command : undefined
-    const kind = classifyToolResult(e.tool, command, ran)
+    const kind = e.run_in_background ? undefined : classifyBashResult(e.command, ran)
     if (kind) await recordTabEvent($, kind)
     return ran
   })
 
   on('classic.PermissionRequest', async ($, e, next) => {
-    await recordTabEvent($, 'permission-asked')
-    return next(e)
+    const answer = await next(e)
+    if (!answer.decision) await recordTabEvent($, 'permission-asked')
+    return answer
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -47,12 +48,18 @@ export function registerTabEvents(on: On): void {
   })
 }
 
-export function classifyToolResult(tool: string, command: string | undefined, ran: ToolCallResult): TabEventKind | undefined {
-  if (tool !== 'Bash' || ran.deny !== undefined) return undefined
-  if (ran.isError && countStackLines(ran.text ?? '') >= CRASH_STACK_LINES) return 'crash'
-  // grep with no match or test -f exit non-zero all day; only a test or build run failing is news.
-  if (!command || !TEST_OR_BUILD_COMMAND.test(command) || PIPE.test(command)) return undefined
-  return ran.isError ? 'command-failed' : 'command-passed'
+function classifyBashResult(command: string, ran: ToolCallResult): TabEventKind | undefined {
+  if (ran.deny !== undefined) return undefined
+  const bash = ran.result as { interrupted?: boolean; backgroundTaskId?: string } | string | undefined
+  if (typeof bash === 'object' && (bash.interrupted || bash.backgroundTaskId)) return undefined
+  // An Esc mid-run comes back as a plain error string, not the typed interrupted flag.
+  if (USER_INTERRUPT.test(ran.text ?? '')) return undefined
+  if (TEST_OR_BUILD_COMMAND.test(command)) {
+    if (EXIT_CODE_HIDDEN.test(command)) return undefined
+    return ran.isError ? 'command-failed' : 'command-passed'
+  }
+  // grep with no match or test -f exit non-zero all day; outside test runs only a real stack trace is news.
+  return ran.isError && countStackLines(ran.text ?? '') >= CRASH_STACK_LINES ? 'crash' : undefined
 }
 
 // Each tab writes only its own key, so overlapping tabs never overwrite each other's events.
@@ -64,7 +71,7 @@ async function recordTabEvent($: EngineInterface, kind: TabEventKind): Promise<v
     const saved = await $.store.get(key)
     const earlier = isTabRecord(saved) ? saved.events.filter(event => now - event.at < KEEP_EVENT_MS) : []
     const events = [...earlier, { kind, at: now }].slice(-KEEP_EVENT_COUNT)
-    await $.store.set(key, { tab: folderName(await $.session.cwd()), events })
+    await $.store.set(key, { tab: folderName(await $.session.root()), events })
   } catch {
     // The pet is a toy: a failed write must never break the tool call or turn it rides on.
   }

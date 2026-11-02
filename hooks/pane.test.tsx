@@ -183,3 +183,30 @@ test('a napping pet stays visible when the pane gets narrower than where it was'
   expect(paintedCells).toBeGreaterThan(10)
   await narrow.unmount()
 })
+
+test('an in-place resize never freezes the pet', async ($, on) => {
+  const now = 50 * HOUR
+  let mountedColumns = 40
+  let blitsAt30 = 0
+  answerEngine(on)
+  on('ui.blit', (_, e) => {
+    if (!('cells' in e)) return { value: { deny: 'not a raster' } }
+    const columns = Uint8Array.fromBase64(e.cells).length / 12 / 6
+    if (columns !== mountedColumns) return { value: { deny: 'another size' } }
+    if (columns === 30) blitsAt30 += 1
+    return { value: {} }
+  })
+  mock.store(on, { pet: { ...hungryPanda(now), hungerElapsedMs: 0 } })
+  const clock = mock.clock(on, { now })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount(PANE)
+  await clock.advance(500)
+
+  await ui.redraw({ ...PANE.props, bodyColumns: 30 } as never)
+  await clock.advance(130)
+  mountedColumns = 30
+  await clock.advance(1_500)
+
+  expect(blitsAt30).toBeGreaterThanOrEqual(5)
+  await ui.unmount()
+})
