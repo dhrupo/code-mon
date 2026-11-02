@@ -47,7 +47,7 @@ you never have to read it from the picture alone.
 ## Sound
 
 Short, original chiptune bleeps, a different set per animal. Sounds play **only while a Code-mon pane is open**, and
-at most one attention sound a minute. `/nap` silences it.
+at most one attention sound a minute. `/nap` silences it. A command plays its sound only in a tab that has the pane open.
 
 - macOS: built in (`afplay`).
 - Linux: the first of `pw-play`, `paplay` or `aplay` it finds. None installed means no sound.

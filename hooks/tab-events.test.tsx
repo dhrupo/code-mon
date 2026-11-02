@@ -42,6 +42,7 @@ type Setup = {
   store?: Record<string, unknown>
   toolAnswer?: ToolCallResult
   beforeStoreSet?: (key: string, saved: Map<string, unknown>) => void
+  pane?: { isMounted: boolean }
 }
 
 async function startTab($: Engine, on: On, setup: Setup) {
@@ -61,7 +62,7 @@ async function startTab($: Engine, on: On, setup: Setup) {
   })
   on('command.register', (_: unknown, e: { name: string }) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.blit', () => ({ value: {} }))
+  on('ui.blit', () => (setup.pane?.isMounted === false ? { value: { deny: 'not mounted' } } : { value: {} }))
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: world.sessionId }))
   on('session.cwd', () => ({ value: world.cwd }))
@@ -247,3 +248,49 @@ test('test and build commands count after cd, env vars or timeout', async ($, on
   expect(tabRecord('s-1')?.events.map(event => event.kind)).toEqual(['command-passed', 'command-passed', 'command-passed'])
 })
 
+
+test('a test run piped into another command is not judged by the pipe\'s exit code', async ($, on) => {
+  const { tabRecord } = await startTab($, on, { sessionId: 's-1', cwd: '/work/api' })
+
+  await $.tool.call({ tool: 'Bash', command: 'npm test 2>&1 | tail -30' })
+
+  expect(tabRecord('s-1')).toBeUndefined()
+})
+
+test('reopening the pane does not replay news from while it was closed', async ($, on) => {
+  const pane = { isMounted: true }
+  const { clock, sounds, world, asOtherTab } = await startTab($, on, { sessionId: 's-1', cwd: '/work/api', store: { pet: playfulPanda() }, pane })
+
+  const first = await $.ui.mount(PANE)
+  await clock.advance(500)
+  await first.unmount()
+  pane.isMounted = false
+  await clock.advance(500)
+
+  world.toolAnswer = { result: {}, isError: true as const, text: 'npm ERR!' }
+  await asOtherTab('/work/my-app', () => $.tool.call({ tool: 'Bash', command: 'npm test' }))
+  await clock.advance(5 * 60_000)
+
+  pane.isMounted = true
+  const reopened = await $.ui.mount(PANE)
+  await clock.advance(1_500)
+
+  expect(await reopened.find({ type: 'Text', text: /my-app/ })).toBeUndefined()
+  expect(sounds).toEqual([])
+  await reopened.unmount()
+})
+
+test('a leader pane that closes hands over at once', async ($, on) => {
+  const pane = { isMounted: true }
+  const { clock, saved } = await startTab($, on, { sessionId: 's-1', cwd: '/work/api', store: { pet: playfulPanda() }, pane })
+
+  const ui = await $.ui.mount(PANE)
+  await clock.advance(1_500)
+  expect((saved.get('pane-leader') as { sessionId: string }).sessionId).toBe('s-1')
+
+  await ui.unmount()
+  pane.isMounted = false
+  await clock.advance(500)
+
+  expect((saved.get('pane-leader') as { beatAt: number }).beatAt).toBe(0)
+})

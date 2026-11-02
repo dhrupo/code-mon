@@ -200,3 +200,13 @@ test('a tick that arrives out of order never lowers hunger', () => {
 
   expect(lateTick.hungerElapsedMs).toBe(600_000)
 })
+
+test('opening the pane starts the hunger clock fresh, so closed-pane minutes never count', () => {
+  const closedAt = ADOPTED_AT + 60_000
+  const ticked = applyPetEvent(adoptPet('cat', 'Mochi', ADOPTED_AT), { kind: 'tick' }, closedAt)
+
+  const reopened = applyPetEvent(ticked, { kind: 'pane-opened' }, closedAt + 4 * 60_000)
+  const firstTick = applyPetEvent(reopened, { kind: 'tick' }, closedAt + 5 * 60_000)
+
+  expect(firstTick.hungerElapsedMs).toBe(ticked.hungerElapsedMs + 60_000)
+})

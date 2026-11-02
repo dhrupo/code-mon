@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, Timer } from 'claude-code'
 
 import type { Animal, Mood, Pet } from '../types'
-import { SCENE_ROWS, drawPetScene, walkOneStep } from './pane-scene'
+import { SCENE_ROWS, drawPetScene, keepInsidePane, walkOneStep } from './pane-scene'
 import type { WalkPosition } from './pane-scene'
 import { HUNGRY_AFTER_MS, adoptPet, applyPetEvent, currentMood } from './pet'
 import type { PetEvent } from './pet'
@@ -142,9 +142,11 @@ export function registerPetPane(on: On): void {
 
     const columns = Math.max(SPRITE_COLUMNS, Math.min(60, e.props.bodyColumns))
     const bubble = await read($, bubbleAtom)
-    animation.lastNewsAt ??= now
     animation.columns = columns
-    animation.timer ??= startAnimation($)
+    if (!animation.timer) {
+      animation.lastNewsAt = now
+      animation.timer = startAnimation($)
+    }
 
     return (
       <Box flexDirection="column">
@@ -169,6 +171,7 @@ function startAnimation($: EngineInterface): Timer {
     if ('deny' in shown) {
       timer.cancel()
       animation.timer = undefined
+      await releasePaneLeader($)
     }
   })
   return timer
@@ -176,7 +179,7 @@ function startAnimation($: EngineInterface): Timer {
 
 function drawPetFrame(pet: Pet, now: number, columns: number): string {
   const mood = currentMood(pet, now)
-  animation.walk = moveForMood(mood, animation.walk, animation.step, columns)
+  animation.walk = moveForMood(mood, keepInsidePane(animation.walk, columns), animation.step, columns)
   const frames = spriteFrames(pet.animal, mood)
   const frame = frames[Math.floor(animation.step / 4) % frames.length]!
   return drawPetScene({ frame, x: animation.walk.x, lift: liftForMood(mood, animation.step), isFacingLeft: animation.walk.isFacingLeft, columns })
@@ -223,6 +226,13 @@ async function claimPaneLeader($: EngineInterface, now: number): Promise<boolean
   if (isOtherLeaderAlive) return false
   await $.store.set(LEADER_KEY, { sessionId: me, beatAt: now })
   return true
+}
+
+async function releasePaneLeader($: EngineInterface): Promise<void> {
+  const leader = await $.store.get(LEADER_KEY)
+  if (isPaneLeader(leader) && leader.sessionId === (await $.session.id())) {
+    await $.store.set(LEADER_KEY, { sessionId: leader.sessionId, beatAt: 0 })
+  }
 }
 
 async function playMoodSound($: EngineInterface, pet: Pet, now: number, isUserAction: boolean, chosenSound?: SoundName): Promise<void> {

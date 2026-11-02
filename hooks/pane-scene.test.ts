@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { SCENE_ROWS, drawPetScene, walkOneStep } from './pane-scene'
+import { SCENE_ROWS, drawPetScene, keepInsidePane, walkOneStep } from './pane-scene'
 import type { SpriteFrame } from './sprites'
 
 const DEFAULT_COLOR = 0x01000000
@@ -75,4 +75,9 @@ test('the pet walks one column a step and turns around at each wall', () => {
 
 test('a pane narrower than the sprite keeps the pet at the left edge', () => {
   expect(walkOneStep({ x: 0, isFacingLeft: false }, 8)).toEqual({ x: 0, isFacingLeft: false })
+})
+
+test('a sitting pet left beyond a narrowed pane is pulled back inside', () => {
+  expect(keepInsidePane({ x: 48, isFacingLeft: false }, 20)).toEqual({ x: 8, isFacingLeft: false })
+  expect(keepInsidePane({ x: 5, isFacingLeft: true }, 20)).toEqual({ x: 5, isFacingLeft: true })
 })

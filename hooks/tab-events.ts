@@ -1,7 +1,7 @@
 import type { EngineInterface, On, ToolCallResult } from 'claude-code'
 
 export type TabEventKind = 'command-failed' | 'crash' | 'command-passed' | 'permission-asked' | 'turn-finished'
-export type TabEvent = { id: string; kind: TabEventKind; at: number }
+export type TabEvent = { kind: TabEventKind; at: number }
 export type TabRecord = { tab: string; events: TabEvent[] }
 export type TabNews = TabEvent & { tab: string }
 
@@ -15,6 +15,8 @@ const TEST_OR_BUILD_COMMAND = new RegExp(
   COMMAND_START +
     String.raw`(?:(?:npm|pnpm|yarn|bun)(?: run)? (?:test|build)\b|(?:npx |bunx )?(?:vitest|jest|pytest|phpunit|mocha|tsc|playwright test)\b|(?:cargo|go) (?:test|build)\b|(?:make|gradle|mvn)\b)`,
 )
+// After a pipe the exit code is the last command's (tail, grep), not the test run's.
+const PIPE = /[^|]\|[^|]/
 const STACK_LINE = /^\s+(at |File "|#\d+ )|^Traceback|^panic:|Fatal error|^Exception in thread/
 
 export const BUBBLE_PHRASE: Record<TabEventKind, string> = {
@@ -49,7 +51,7 @@ export function classifyToolResult(tool: string, command: string | undefined, ra
   if (tool !== 'Bash' || ran.deny !== undefined) return undefined
   if (ran.isError && countStackLines(ran.text ?? '') >= CRASH_STACK_LINES) return 'crash'
   // grep with no match or test -f exit non-zero all day; only a test or build run failing is news.
-  if (!command || !TEST_OR_BUILD_COMMAND.test(command)) return undefined
+  if (!command || !TEST_OR_BUILD_COMMAND.test(command) || PIPE.test(command)) return undefined
   return ran.isError ? 'command-failed' : 'command-passed'
 }
 
@@ -61,7 +63,7 @@ async function recordTabEvent($: EngineInterface, kind: TabEventKind): Promise<v
     const now = await $.clock.now()
     const saved = await $.store.get(key)
     const earlier = isTabRecord(saved) ? saved.events.filter(event => now - event.at < KEEP_EVENT_MS) : []
-    const events = [...earlier, { id: `${sessionId}:${now}:${earlier.length}`, kind, at: now }].slice(-KEEP_EVENT_COUNT)
+    const events = [...earlier, { kind, at: now }].slice(-KEEP_EVENT_COUNT)
     await $.store.set(key, { tab: folderName(await $.session.cwd()), events })
   } catch {
     // The pet is a toy: a failed write must never break the tool call or turn it rides on.

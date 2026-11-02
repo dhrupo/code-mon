@@ -34,6 +34,10 @@ export function walkOneStep(position: WalkPosition, columns: number): WalkPositi
   return position.x >= maxX ? { x: maxX, isFacingLeft: true } : { x: position.x + 1, isFacingLeft: false }
 }
 
+export function keepInsidePane(position: WalkPosition, columns: number): WalkPosition {
+  return { ...position, x: Math.min(position.x, Math.max(0, columns - SPRITE_COLUMNS)) }
+}
+
 function readScenePixel(scene: PetScene, column: number, pixelRow: number): number | undefined {
   const spriteTop = SCENE_ROWS * 2 - SPRITE_ROWS - scene.lift
   const spriteRow = pixelRow - spriteTop

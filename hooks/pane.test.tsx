@@ -154,3 +154,32 @@ test('after the pane is redrawn at a new width, the pet keeps animating at that 
   expect(blitsAtNewWidth).toBeGreaterThanOrEqual(5)
   await narrow.unmount()
 })
+
+test('a napping pet stays visible when the pane gets narrower than where it was', async ($, on) => {
+  const now = 50 * HOUR
+  let mountedColumns = 60
+  let lastCells = ''
+  answerEngine(on)
+  on('ui.blit', (_, e) => {
+    if (!('cells' in e)) return { value: { deny: 'not a raster' } }
+    if (Uint8Array.fromBase64(e.cells).length / 12 / 6 !== mountedColumns) return { value: { deny: 'another size' } }
+    lastCells = e.cells
+    return { value: {} }
+  })
+  mock.store(on, { pet: { ...hungryPanda(now), hungerElapsedMs: 0 } })
+  const clock = mock.clock(on, { now })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const wide = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 60 } })
+  await clock.advance(9_000)
+  await $.command.run({ command: 'nap', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } })
+  await wide.unmount()
+
+  mountedColumns = 20
+  const narrow = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 20 } })
+  await clock.advance(600)
+
+  const words = new Uint32Array(Uint8Array.fromBase64(lastCells).buffer)
+  const paintedCells = words.filter((word, i) => i % 3 === 0 && word !== 0x20).length
+  expect(paintedCells).toBeGreaterThan(10)
+  await narrow.unmount()
+})

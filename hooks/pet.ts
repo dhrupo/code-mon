@@ -59,7 +59,8 @@ export function applyPetEvent(pet: Pet, event: PetEvent, now: number): Pet {
   const eventMood = SHORT_MOOD_BY_EVENT[event.kind]
   // Claude-signal moods (dizzy, sick, alert, proud) carry news, so the dance only replaces happy or no mood.
   const shortMood = wasAwayLong && (!eventMood || eventMood.mood === 'happy') ? MISSED_YOU_MOOD : eventMood
-  const active = { ...pet, hungerElapsedMs, isNapping, lastActiveAt: now }
+  const lastTickAt = event.kind === 'pane-opened' ? now : pet.lastTickAt
+  const active = { ...pet, hungerElapsedMs, isNapping, lastActiveAt: now, lastTickAt }
   if (!shortMood) return { ...active, tempMood: undefined, tempMoodUntil: undefined }
   return { ...active, tempMood: shortMood.mood, tempMoodUntil: now + shortMood.lastsMs }
 }
