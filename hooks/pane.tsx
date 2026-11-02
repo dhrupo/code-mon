@@ -199,8 +199,7 @@ async function pollOtherTabs($: EngineInterface): Promise<Pet | null> {
     await update($, bubbleAtom, () => null)
   }
 
-  const stored = await $.store.get(PET_STORE_KEY)
-  let pet = isSavedPet(stored) ? stored : await read($, petAtom)
+  let pet = await readSharedPet($)
   if (!pet) return null
   if (!isLeader) {
     if (JSON.stringify(pet) !== JSON.stringify(await read($, petAtom))) await update($, petAtom, () => pet)
